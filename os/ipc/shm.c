@@ -15,16 +15,20 @@
 #include <sys/shm.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
+#include <semaphore.h>
+
 
 void print_error(const char*, int);
+
+sem_t mutex;
 
 int main(int argc, char* argv[])
 {
 
+	sem_init(&mutex, 0 , 1);
 	/*
 	 * Get a key I can share with other processes.
 	 */
-
 	int tokid = 0;
 	char *filepath = "/tmp";
 
@@ -42,7 +46,7 @@ int main(int argc, char* argv[])
 	printf("Page size: %ld\n", bufsz);
 
 	int shmid;
-	if ((shmid = shmget(key, bufsz, IPC_CREAT | 0600)) == -1)
+	if ((shmid = shmget(key, bufsz, IPC_CREAT | 0666)) == -1)
 		print_error("Can not create shared memory", errno);
 
 	printf("Shared memory id: %d\n", shmid);
@@ -62,33 +66,58 @@ int main(int argc, char* argv[])
 	int shmlen = strlen(shm);
 	printf("Shared memory bytes used: %d\n", shmlen);
 
-	char *cbuf = " foo ";
-	int cbuflen = strlen(cbuf);
-	printf("Length of string to write: %d\n", cbuflen);
+	char *cbuf;
+	char *name;
+	
+	size_t len = 0;
+	ssize_t mesLen = 0;
+	
+	//Client
+	if(argc > 1 && 0 == strcmp(argv[1], "exit")){
+		//shm == NULL;
+		memset(shm, '\0', sizeof(char));
+		if(shmdt(shm) == -1){
+			printf("error, cannot detach shared mem\n");
+		}
+		if(shmctl(shmid, IPC_RMID, 0) == -1){
+			printf("Shared memory not valid\n");
+		}
+		exit(0);
+	}else{
+		while(1){
+			int memlen = strlen(shm);
+			
+			printf("Enter name:\n");
+			//scanf_s("%s\n" , &name, sizeof(stdin));
+			mesLen = getline(&name, &len, stdin);
+			while(1){
+		//	printf(name);
+				printf("New message from %s" , name, "!");
+			
+				mesLen = getline(&cbuf, &len, stdin);
+				name[strlen(name) - 1] = '\0';
+				strcat(name , ": ");
+				strcat(name, cbuf); 
+				sem_wait(&mutex);
+				//cbuf == NULL;						
+	
+				int cbuflen = strlen(name);
+				memlen = strlen(shm);
+				if (shmlen + cbuflen + 1 < bufsz) {
+					printf("Before write (%lu): %s\n", strlen(shm), shm);
 
-	if (shmlen + cbuflen + 1 < bufsz) {
-		printf("Before write (%lu): %s\n", strlen(shm), shm);
+					memcpy(shm + shmlen, cbuf,  cbuflen + 1);
 
-		memcpy(shm + shmlen, cbuf,  cbuflen + 1);
-
-		printf("After write (%lu): %s\n", strlen(shm), shm);
-	} 
-	else {
-		printf("Buffer full\n");
+					printf("After write (%lu): %s\n", strlen(shm), shm);
+				}else {
+					printf("Buffer full\n");
+					memset(shm, '\0', sizeof(char));
+					}
+				sem_post(&mutex);
+			
+			}
+		}
 	}
-
-	sleep(5);
-
-	/*
- 	 * Clean up the shared memory pointer and id.
-	 */
-
-	if (shmdt(shm) == -1)
-		print_error("Unable to detach shared memory", errno);
-
-	if (shmctl(shmid, IPC_RMID, 0)  == -1)
-		print_error("Can not validate shared memory", errno);
-
 	exit(0);
 }
 
